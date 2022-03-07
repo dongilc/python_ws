@@ -1,4 +1,3 @@
-from re import T
 from .general_defines import *
 from . import vesc_crc
 import ctypes
@@ -46,15 +45,11 @@ class VESC_PACKET():
         start_frame = [2]
 
         if comm == COMM_PACKET_ID['COMM_CUSTOM_APP_DATA']:
-            if comm_value[0] == None:
-                command = comm
-                vesc_target_id = comm_value[1]
-                command_frame = [comm, OPENROBOT_HOST_TYPE['USB'], 1, vesc_target_id]
-            else:
-                command = comm_value[0]
-                vesc_target_id = comm_value[1]
-                comm_value = comm_value[2]
-                command_frame = [comm, OPENROBOT_HOST_TYPE['USB'], 1, vesc_target_id, command]
+            host = comm_value[0]
+            command = comm_value[1]
+            vesc_target_id = comm_value[2]
+            comm_value = comm_value[3]
+            command_frame = [comm, host, 1, vesc_target_id, command]
         elif comm == COMM_PACKET_ID['COMM_FORWARD_CAN']:
             vesc_target_id = comm_value[0]
             command = comm_value[1]
@@ -105,6 +100,7 @@ class VESC_PACKET():
         data_frame = command_frame + data_list
         data_len = [len(data_frame)]
 
+        # To see sending data frame
         #print("data_frame:",data_frame)
         #print("data_len:",data_len)
 
@@ -260,6 +256,29 @@ class VESC_PACKET():
             send_data = self.packet_encoding(comm_set_cmd, [vesc_id, COMM_PACKET_ID['COMM_TERMINAL_CMD'], value])
         return send_data
 
+    def regist_controller_id(self, index, value):
+        if index is None:
+            self.controller_id_list.append(value['controller_id']) # add new vesc id
+            if self.value_list is None:
+                self.value_list = [value] # first time
+            else:
+                self.value_list.append(value) # add value
+        else:
+            try:    
+                self.value_list[index] = value # overwrite value
+            except:
+                self.value_list.append(value) # add value
+
+    #####
+    def pdo_get_id(self, vesc_id):
+        comm_set_cmd = COMM_PACKET_ID['COMM_CUSTOM_APP_DATA']
+        host_type = OPENROBOT_HOST_TYPE['ETHERCAT']
+        command = COMM_PACKET_ID_OPENROBOT['COMM_SET_RELEASE']
+        vesc_target_id = vesc_id
+        comm_value = 0
+        send_data = self.packet_encoding(comm_set_cmd, [host_type, command, vesc_target_id, comm_value])
+        return send_data
+
     #데이터 처리할 함수
     def parsing_data(self, data):
         #print("length:{}, raw data:{}".format(data[1], data))
@@ -269,13 +288,10 @@ class VESC_PACKET():
         ind = 0
         start_byte = data[ind]; ind += 1
         len = data[ind]; ind += 1
-        if len < 126:
-            data_frame = data[ind:ind+len]; ind += len
-            crc_frame = data[ind:ind+2]; ind += 2
-            end_byte = data[ind]
-        else:
-            raise Exception('invalid vesc packet length')
-
+        data_frame = data[ind:ind+len]; ind += len
+        crc_frame = data[ind:ind+2]; ind += 2
+        end_byte = data[ind]
+    
         #print(start_byte)
         #print(len)
         #print(data_frame)
@@ -360,17 +376,7 @@ class VESC_PACKET():
                 #print("Controller Id:",values_temp['controller_id'])
                 #print("index:{}".format(index))
 
-                if index is None:
-                    self.controller_id_list.append(values_temp['controller_id']) # add new vesc id
-                    if self.value_list is None:
-                        self.value_list = [values_temp] # first time
-                    else:
-                        self.value_list.append(values_temp) # add value
-                else:
-                    try:    
-                        self.value_list[index] = values_temp # overwrite value
-                    except:
-                        self.value_list.append(values_temp) # add value
+                self.regist_controller_id(index, values_temp)
                 
                 #print(self.value_list)
 
@@ -402,28 +408,22 @@ class VESC_PACKET():
                     print("---------------------------------------------------") 
 
             elif command == COMM_PACKET_ID['COMM_CUSTOM_APP_DATA']:
-                RAD2DEG = 180/np.pi
                 #print("custom")
                 #print("raw data hex:",list2hex(data_frame))
 
-                can_devs_num = data_frame[ind_f]; ind_f += 1
-                controller_id = data_frame[ind_f]; ind_f += 1
-                #volt_input = get_bytes(data_frame[ind_f:ind_f+2], 10); ind_f += 2
-                #temp_fet = get_bytes(data_frame[ind_f:ind_f+2], 10); ind_f += 2
-                temp_motor = self.get_bytes(data_frame[ind_f:ind_f+2], 10); ind_f += 2
-                motor_current = self.get_bytes(data_frame[ind_f:ind_f+2], 100); ind_f += 2
-                #input_current = get_bytes(data_frame[ind_f:ind_f+4], 100); ind_f += 4
-                #duty = get_bytes(data_frame[ind_f:ind_f+2], 1000); ind_f += 2
-                #watt_hours = get_bytes(data_frame[ind_f:ind_f+4], 10000); ind_f += 4
-                #watt_hours_charged = get_bytes(data_frame[ind_f:ind_f+4], 10000); ind_f += 4
-                accum_pos_now = self.get_bytes(data_frame[ind_f:ind_f+4], 1)*RAD2DEG; ind_f += 4
-                rps = self.get_bytes(data_frame[ind_f:ind_f+2], 100); ind_f += 2
+                values_temp = {}
+                values_temp['controller_id'] = self.get_bytes(data_frame[ind_f:ind_f+1]); ind_f += 1
+                values_temp['pos[rad]'] = self.get_bytes(data_frame[ind_f:ind_f+4], 100); ind_f += 4
+                values_temp['vel[rps]'] = self.get_bytes(data_frame[ind_f:ind_f+4], 10000); ind_f += 4
+                values_temp['curr[A]'] = self.get_bytes(data_frame[ind_f:ind_f+4], 10000); ind_f += 4
+                values_temp['voltage[V]'] = self.get_bytes(data_frame[ind_f:ind_f+2], 10); ind_f += 2
+                values_temp['temp_motor[C]'] = self.get_bytes(data_frame[ind_f:ind_f+2], 10); ind_f += 2
+                values_temp['temp_mosfet[C]'] = self.get_bytes(data_frame[ind_f:ind_f+2], 10); ind_f += 2
 
-                temp_data = [[controller_id, round(temp_motor,3)]]
-                current_data = [[controller_id, round(motor_current,3)]]
-                pos_data = [[controller_id, round(accum_pos_now)]]
-                rps_data = [[controller_id, round(rps,3)]]
+                index = search_list_value_index(values_temp['controller_id'], self.controller_id_list)
+                self.regist_controller_id(index, values_temp)
 
+                '''
                 if self.debug_print_custom_return:
                     # Local vesc
                     print("==============================================")
@@ -440,30 +440,7 @@ class VESC_PACKET():
                     #print("watt_hours_charged:",watt_hours_charged,"Wh")
                     print("accum_pos_now:",accum_pos_now,"deg")
                     print("speed:",rps,"rps")
-                    
-                for i in range(can_devs_num):
-                    # CAN connected vesc
-                    controller_id = data_frame[ind_f]; ind_f += 1
-                    temp_motor = self.get_bytes(data_frame[ind_f:ind_f+2], 10); ind_f += 2
-                    temp_data.append([controller_id, round(temp_motor,3)])
-                    temp_data.sort()
-                    motor_current = self.get_bytes(data_frame[ind_f:ind_f+2], 100); ind_f += 2
-                    current_data.append([controller_id, round(motor_current,3)])
-                    current_data.sort()
-                    accum_pos_now = self.get_bytes(data_frame[ind_f:ind_f+4], 100)*RAD2DEG; ind_f += 4
-                    pos_data.append([controller_id, round(accum_pos_now)])
-                    pos_data.sort()
-                    rps = self.get_bytes(data_frame[ind_f:ind_f+2], 100); ind_f += 2
-                    rps_data.append([controller_id, round(rps,3)])
-                    rps_data.sort()
-
-                    if self.debug_print_custom_return:
-                        print("-------------------------------------------")
-                        print("Can Connected Controller Id:",controller_id)
-                        print("temp_motor:",temp_motor,"'C")
-                        print("motor_current:",motor_current,"A")
-                        print("accum_pos_now:",accum_pos_now,"deg")
-                        print("speed:",rps,"rps")
+                '''
 
             elif command == COMM_PACKET_ID['COMM_PRINT']:
                 print(bytes(data_frame).decode())

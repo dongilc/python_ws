@@ -69,7 +69,7 @@ class VESC_ETHERCAT(VESC_PACKET):
             output_tmp = bytearray([0 for i in range(self.BYTE_NUM)])
             slave.output = bytes(output_tmp)
             # load data
-            send_data = self.get_value(0xFF) #self.get_fw_version(0xFF) #self.get_value(0xFF)
+            send_data = self.pdo_get_id(0xFF) #self.get_fw_version(0xFF) #self.get_value(0xFF)
             for i in range(len(send_data)):
                 output_tmp[i] = send_data[i]
             slave.output = bytes(output_tmp)
@@ -110,27 +110,28 @@ class VESC_ETHERCAT(VESC_PACKET):
                         print("Joint number of vesc id:", ids[i], "is not pre-defined")
             #print(vesc_packet_usb.vesc_id_data)
 
-    def ethercat_send_cmd(self, cmd, slave_index, value=0):
+    def ethercat_send_cmd(self, cmd, value=0):
         vesc_id = 0xFF
+
+        comm_set_cmd = COMM_PACKET_ID['COMM_CUSTOM_APP_DATA']
+        host_type = OPENROBOT_HOST_TYPE['ETHERCAT']
 
         send_data = []
         if cmd == "duty":
-            send_data = self.set_duty_control(vesc_id, value)
+            command = COMM_PACKET_ID['COMM_SET_DUTY']
+            set_value = float(value)
         elif cmd == "current":
-            send_data = self.set_current_control(vesc_id, value)
+            command = COMM_PACKET_ID['COMM_SET_CURRENT']
+            set_value = float(value)
         elif cmd == "current_brake":
-            send_data = self.set_current_brake_control(vesc_id, value)
+            command = COMM_PACKET_ID['COMM_SET_CURRENT_BRAKE']
+            set_value = float(value)
         elif cmd == "release":
-            send_data = self.set_release(vesc_id)
-        elif cmd == "getvalue":
-            send_data = self.get_value(vesc_id)
-        
-        # use get value cmd default
-        send_data = send_data + self.get_value(vesc_id)
-        #print(send_data)
+            command = COMM_PACKET_ID['COMM_SET_CURRENT']   
+            set_value = 0
 
+        send_data = self.packet_encoding(comm_set_cmd, [host_type, command, vesc_id, set_value])
         return send_data
-        #self.ethercat_Master_Load_Txdata(slave_index, send_data)
 
     def ethercat_Slave_Read_Rxdata(self, data):
         packet = []

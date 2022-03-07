@@ -123,8 +123,22 @@ class REALTIME_PLOT():
         self.tree.update(values=self.treedata)
         #print(c_key)
 
+    def del_tree_group(self, group_name):
+        node = self.treedata.tree_dict[group_name]
+        parent_node = self.treedata.tree_dict[node.parent]
+        parent_node.children.remove(node)
+        #print('treedata {} is removed'.format(group_name))
+        #print(''.format(self.treedata.tree_dict[group_name].key))
+        self.tree.update(values=self.treedata)
+
+    def del_tree(self):
+        _, group_list = self.search_tree_item('') # check multiple registration
+        #print(group_list)
+        for group in group_list:
+            self.del_tree_group(group)
+
     #########################################################
-    def update_plot(self, rtdata, number_to_draw):
+    def update_plot(self, connection_type, rtdata, number_to_draw):
         data_points = int(number_to_draw)
         keys = []
         
@@ -133,7 +147,10 @@ class REALTIME_PLOT():
         for value_dict in rtdata['vesc_values_list']:
             vesc_id = value_dict['controller_id']
             for key in value_dict:
-                converted_value['(VESC_ID:{}) {}'.format(vesc_id, key)] = value_dict[key]
+                if connection_type == 'SERIAL':
+                    converted_value['(VESC_ID:{}_SERIAL) {}'.format(vesc_id, key)] = value_dict[key]
+                elif connection_type == 'ETHERCAT':
+                    converted_value['(VESC_ID:{}_ETHERCAT) {}'.format(vesc_id, key)] = value_dict[key]
         #print(converted_value)
 
         # input rtdata to graph_data
@@ -165,7 +182,7 @@ class REALTIME_PLOT():
             #self.ax.set_ylim([0, lim_max])
             self.ax.grid()
             for k in keys:
-                self.ax.plot(self.time[k], self.data_dict[k], label=k)
+                self.ax.plot(self.time[k], self.data_dict[k], label=k, marker = 'o')
             if len(keys) != 0:
                 self.ax.legend(fontsize=font_size, loc='upper right')
                 self.ax.tick_params(labelsize=font_size)

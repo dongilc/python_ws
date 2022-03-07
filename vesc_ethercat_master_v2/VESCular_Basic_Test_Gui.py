@@ -1,7 +1,6 @@
-# VESC Serial and EtherCAT V1
-# BYTE_NUM 128 version
+# VESC Serial and EtherCAT V2
+# BYTE_NUM 32 Byte version
 # EtherCAT Loop 1kHz ok, But Slave 128Byte Exchange loop is about 300Hz
-# So, decide to optimize pdo byte
 # 2022-03-05
 # DRCL, CDI
 
@@ -32,8 +31,9 @@ graph_update_flag = False
 vesc_values_names = ['temp_fet[C]', 'temp_motor[C]', 'motor_current[A]', 'input_current[A]', 'id_current[A]', 'iq_current[A]', 'duty', 'erpm', 
                      'volt_input[V]', 'amp_hours[Ah]', 'amp_hours_charged[Ah]', 'watt_hours[Wh]', 'watt_hours_charged[Wh]', 'tacho', 'tacho_abs', 
                      'fault', 'pid_pos_now[deg]', 'controller_id', 'temp_mos1[C]', 'temp_mos2[C]', 'temp_mos3[C]', 'vd_volt[V]', 'vq_volt[V]']
+custom_values_names = ['controller_id', 'pos[rad]', 'vel[rps]', 'curr[A]', 'voltage[V]', 'temp_motor[C]', 'temp_mosfet[C]']
 
-BYTE_NUM = 64#32
+BYTE_NUM = 32
 actual_wkc = None   # Working Counter
 proc_ethercat_pdo = None
 process_data = {}
@@ -123,12 +123,13 @@ def refresh_vesc_serial_class_list():
     window.Element('-VESC_TABLE_SERIAL-').Update(values=vesc_serial_class.vesc_id_data)
     refresh_list_flag = False
 
-def serial_alive_thread_stop(window):
+def serial_alive_thread_stop(window, rpc):
     global vesc_serial_class
     try:
         vesc_serial_class.periodic_run = False
         window.Element('-BTN_SERIAL_PERIODIC-').Update(text="Periodic On")
         window.Element('-TERMINAL_SEND-').Update(disabled=False)
+        rpc.del_tree()
         print('Serial Periodic Process Stop')
     except Exception as e: None
 
@@ -201,17 +202,18 @@ def ethercat_pdo_multiprocess_func(vec,):
             elif delay_time < 0:
                 delay_time = ((2-0.02)-(time.time_ns() - time_start)/1000000.)/1000.
                 time.sleep(delay_time)
-            else:
-                time.sleep(0.0005)
+            #else:
+            #    time.sleep(0.0005)
         except: None
 
-def ethercat_pdo_multiprocess_stop(window):
+def ethercat_pdo_multiprocess_stop(window, rpc):
     global proc_ethercat_pdo
     try:
         proc_ethercat_pdo.terminate()
         proc_ethercat_pdo = None
         print("EtherCAT PDO Process Stop")
         window.Element("-ETHERCAT_STS_MSG-").Update('EtherCAT PDO Stopped')
+        rpc.del_tree()
     except Exception as e: None
 
 def ethercat_master_close(vec):
@@ -381,10 +383,10 @@ if __name__ == "__main__":
                         class_instance.serial_name.close()
             
             # Terminate Serical Process
-            serial_alive_thread_stop(window)
+            serial_alive_thread_stop(window, rp_class)
 
             # Terminate Ethercat Process
-            ethercat_pdo_multiprocess_stop(window)
+            ethercat_pdo_multiprocess_stop(window, rp_class)
             try:
                 vesc_ethercat_class.master.state = pysoem.INIT_STATE
                 # request INIT state for all slaves
@@ -427,24 +429,28 @@ if __name__ == "__main__":
             elif vesc_serial_name != '':
                 if vesc_serial_class is not None:
                     if vesc_serial_class.periodic_run == False:
-                        vesc_serial_class.periodic_run = True
-                        vesc_serial_class.periodic_freq = float(values['-SERIAL_PERIODIC_FREQ-'])       
-                        window.Element('-BTN_SERIAL_PERIODIC-').Update(text="Periodic Off")
-                        window.Element('-TERMINAL_SEND-').Update(disabled=True)
-                        #print("Serial device periodic control is On")
+                        try:
+                            if proc_ethercat_pdo.is_alive():
+                                print("EtherCAT PDO is running. Turn off PDO and retry")
+                        except: 
+                            vesc_serial_class.periodic_run = True
+                            vesc_serial_class.periodic_freq = float(values['-SERIAL_PERIODIC_FREQ-'])       
+                            window.Element('-BTN_SERIAL_PERIODIC-').Update(text="Periodic Off")
+                            window.Element('-TERMINAL_SEND-').Update(disabled=True)
+                            #print("Serial device periodic control is On")
 
-                        vs.signal.signal(vs.signal.SIGINT, vesc_serial_class.periodic_run)
-                        vesc_serial_class.alive_thread = threading.Thread(target=vesc_serial_class.serial_send_alive)
-                        vesc_serial_class.alive_thread.start()
+                            vs.signal.signal(vs.signal.SIGINT, vesc_serial_class.periodic_run)
+                            vesc_serial_class.alive_thread = threading.Thread(target=vesc_serial_class.serial_send_alive)
+                            vesc_serial_class.alive_thread.start()
 
-                        if rp_class.add_tree_group('Serial Loop') is False:
-                            rp_class.add_tree_item('Serial Loop', 'time')
-                            rp_class.add_tree_item('Serial Loop', 'freq.')
-                        #proc_serial_alive = Process(target=serial_alive_multiprocess_func, args=(vesc_serial_class,))
-                        #proc_serial_alive.start()
-                        #print("Serial Periodic Process Start")
+                            if rp_class.add_tree_group('Serial Loop') is False:
+                                rp_class.add_tree_item('Serial Loop', 'time')
+                                rp_class.add_tree_item('Serial Loop', 'freq.')
+                            #proc_serial_alive = Process(target=serial_alive_multiprocess_func, args=(vesc_serial_class,))
+                            #proc_serial_alive.start()
+                            #print("Serial Periodic Process Start")
                     else:
-                        serial_alive_thread_stop(window)
+                        serial_alive_thread_stop(window, rp_class)
                         
                 else:
                     print("VESC Not Connected")
@@ -503,7 +509,6 @@ if __name__ == "__main__":
                     vesc_serial_class.exitThread_usb = True
                     vesc_serial_class.periodic_run = False
                     window.Element('-BTN_SERIAL_PERIODIC-').Update(text="Periodic On")
-                    ethercat_pdo_multiprocess_stop()
 
                     vesc_serial_class.serial_name.close()
                     vesc_serial_class = None
@@ -670,7 +675,7 @@ if __name__ == "__main__":
                 if vesc_ethercat_class.master is not None:
                     if proc_ethercat_pdo is not None:
                         if proc_ethercat_pdo.is_alive():
-                            ethercat_pdo_multiprocess_stop(window)
+                            ethercat_pdo_multiprocess_stop(window, rp_class)
                             ethercat_master_close(vesc_ethercat_class)                        
                     print("EtherCAT Master is closed")
                 else:
@@ -715,7 +720,7 @@ if __name__ == "__main__":
             if vesc_ethercat_class is not None:
                 if vesc_ethercat_class.master is not None:
                     if proc_ethercat_pdo is not None:
-                        ethercat_pdo_multiprocess_stop(window)
+                        ethercat_pdo_multiprocess_stop(window, rp_class)
                     else:
                         print("EtherCAT PDO is not running.")
                 else:
@@ -732,10 +737,10 @@ if __name__ == "__main__":
                         slave_index = row[0]
 
                         if event == "-ETHERCAT_CMD_DUTY-":
-                            send_data = vesc_ethercat_class.ethercat_send_cmd("duty", slave_index, values['-ETHERCAT_CMD_VALUE1-'])
+                            send_data = vesc_ethercat_class.ethercat_send_cmd("duty", values['-ETHERCAT_CMD_VALUE1-'])
                             #print("set duty {} at slave{}".format(values['-ETHERCAT_CMD_VALUE1-'], slave_index+1))
                         elif event == "-ETHERCAT_CMD_RELEASE-":
-                            send_data = vesc_ethercat_class.ethercat_send_cmd("release", slave_index)
+                            send_data = vesc_ethercat_class.ethercat_send_cmd("release")
                             #print("set release at slave{}".format(slave_index+1))
                         process_data['target_slave'] = slave_index
                         process_data['send_data'] = send_data
@@ -754,10 +759,10 @@ if __name__ == "__main__":
                         slave_index = row[0]
 
                         if event == "-ETHERCAT_CMD_CURRENT-":
-                            send_data = vesc_ethercat_class.ethercat_send_cmd("current", slave_index, values['-ETHERCAT_CMD_VALUE2-'])
+                            send_data = vesc_ethercat_class.ethercat_send_cmd("current", values['-ETHERCAT_CMD_VALUE2-'])
                             #print("set current {} at slave{}".format(values['-ETHERCAT_CMD_VALUE2-'], slave_index+1))
                         elif event == "-ETHERCAT_CMD_CURRENT_BRAKE-":
-                            send_data = vesc_ethercat_class.ethercat_send_cmd("current_brake", slave_index, values['-ETHERCAT_CMD_VALUE2-'])
+                            send_data = vesc_ethercat_class.ethercat_send_cmd("current_brake", values['-ETHERCAT_CMD_VALUE2-'])
                             #print("set current brake {} at slave{}".format(values['-ETHERCAT_CMD_VALUE2-'], slave_index+1))
                         process_data['target_slave'] = slave_index
                         process_data['send_data'] = send_data
@@ -807,13 +812,14 @@ if __name__ == "__main__":
                     graph_update_flag = True
                     print("Graph on", vesc_ethercat_class.controller_id_list)
                     for vesc_id in vesc_ethercat_class.controller_id_list:
-                        group_name = 'VESC_ID:{}'.format(vesc_id)
-                        try:
-                            print("Already registed group",rp_class.treedata.tree_dict[group_name].key)
-                        except:
+                        group_name = 'VESC_ID:{}_ETHERCAT'.format(vesc_id)
+                        searched_flag, _ = rp_class.search_tree_item(group_name)
+                        if searched_flag == True:
+                            print("Already registed group {}".format(group_name))
+                        else:
                             rp_class.add_tree_group(group_name)
                             print("Newly regist group",group_name)
-                            for i, name in enumerate(vesc_values_names):
+                            for i, name in enumerate(custom_values_names):
                                 rp_class.add_tree_item(group_name, name)
                 else:
                     print("EtherCAT PDO is not runing")
@@ -823,10 +829,11 @@ if __name__ == "__main__":
                     graph_update_flag = True
                     print("Graph on", vesc_serial_class.controller_id_list)
                     for vesc_id in vesc_serial_class.controller_id_list:
-                        group_name = 'VESC_ID:{}'.format(vesc_id)
-                        try:
-                            print("Already registed group",rp_class.treedata.tree_dict[group_name].key)
-                        except:
+                        group_name = 'VESC_ID:{}_SERIAL'.format(vesc_id)
+                        searched_flag, _ = rp_class.search_tree_item(group_name)
+                        if searched_flag == True:
+                            print("Already registed group {}".format(group_name))
+                        else:
                             rp_class.add_tree_group(group_name)
                             print("Newly regist group",group_name)
                             for i, name in enumerate(vesc_values_names):
@@ -858,13 +865,13 @@ if __name__ == "__main__":
                 if proc_ethercat_pdo.is_alive():
                     graph_data = {'(PDO Loop) time':pdo_loop_time_ms, '(PDO Loop) freq.':pdo_loop_freq_khz}
                     graph_data['vesc_values_list'] = vesc_values_list
-                    rp_class.update_plot(graph_data, values['-SLIDER-DATAPOINTS-'])
-
+                    rp_class.update_plot('ETHERCAT', graph_data, values['-SLIDER-DATAPOINTS-'])
+                
             try:
                 if vesc_serial_class.periodic_run:
                     graph_data = {'(Serial Loop) time':vesc_serial_class.loop_time_ms, '(Serial Loop) freq.':vesc_serial_class.loop_freq_hz}
                     graph_data['vesc_values_list'] = vesc_serial_class.value_list
-                    rp_class.update_plot(graph_data, values['-SLIDER-DATAPOINTS-'])
+                    rp_class.update_plot('SERIAL', graph_data, values['-SLIDER-DATAPOINTS-'])
             except: None
 
     window.close()
